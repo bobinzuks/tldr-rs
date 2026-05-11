@@ -7,7 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const VERSION: &str = "3.4.4";
+const VERSION: &str = concat!("tldr-rs v", env!("CARGO_PKG_VERSION"));
 const CLIENT_SPECIFICATION: &str = "2.3";
 const PAGES_SOURCE_LOCATION: &str =
     "https://raw.githubusercontent.com/tldr-pages/tldr/main/pages";
