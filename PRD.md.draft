@@ -1,0 +1,345 @@
+# tldr Client — Product Requirements Document (Language-Neutral)
+
+## 1. Purpose
+
+The tldr client provides instant, practical examples of command-line tool usage. It fetches community-maintained documentation pages that show common use cases for commands, presenting them in a human-readable format with syntax highlighting. Unlike traditional man pages which are comprehensive but verbose, tldr pages focus on the most frequent usage patterns that users actually need.
+
+## 2. User-Facing Features
+
+### 2.1 Command Lookup
+
+**Description:** Given a command name, retrieve and display its documentation page showing practical examples.
+
+**User Input:** Command name (e.g., "tar", "git commit", "docker run")
+
+**User Output:** Formatted documentation showing:
+- Command name (highlighted)
+- Brief description of the command's purpose
+- Example descriptions explaining use cases
+- Executable command templates with placeholder parameters
+
+**Edge Cases:**
+- Multi-word commands (e.g., "git commit") are joined with hyphens internally
+- Commands may exist on multiple platforms; show platform-specific version first
+- Commands may be available in multiple languages; use user's locale preference
+
+**Error Conditions:**
+- Command documentation does not exist → display contribution invitation message
+- Network unavailable and cache miss → report network error
+- Cache corrupted or unreadable → fall back to network fetch
+
+### 2.2 Platform Selection
+
+**Description:** Override automatic platform detection to view documentation for a different operating system.
+
+**User Input:** Platform identifier (linux, osx, windows, android, freebsd, netbsd, openbsd, sunos, common)
+
+**User Output:** Documentation filtered to the specified platform, with "common" as fallback.
+
+**Edge Cases:**
+- Invalid platform identifier → report error with valid options
+- Platform has no documentation for command → fall back to "common" platform
+- Same command exists on multiple platforms → inform user of alternatives
+
+**Error Conditions:**
+- Platform not recognized → display warning and fall back to auto-detection
+
+### 2.3 Language Selection
+
+**Description:** Display documentation in a specific language translation.
+
+**User Input:** Language code (e.g., "es", "zh", "pt_BR")
+
+**User Output:** Documentation in the requested language, falling back through locale chain to English.
+
+**Edge Cases:**
+- Partial translations → missing pages fall back to English
+- Regional variants (pt_BR vs pt_PT) → preserve regional specificity
+- User locale not supported → fall back to English
+
+**Error Conditions:**
+- Invalid language code → silently fall back to English
+
+### 2.4 Cache Management
+
+**Description:** Download and store documentation pages locally for offline access and faster retrieval.
+
+**Update Cache:**
+- Downloads compressed archive of all pages for each configured language
+- Extracts and stores pages in user's cache directory
+- Reports count of pages cached per language
+
+**Clear Cache:**
+- Removes locally cached pages for specified or all languages
+- Reports which language caches were cleared
+
+**User Input:** Update or clear command, optionally with language filter
+
+**User Output:** Status messages indicating success or failure per language
+
+**Edge Cases:**
+- Partial download failure → report error for affected languages, continue with others
+- Insufficient disk space → report storage error
+- Cache directory doesn't exist → create it automatically
+
+**Error Conditions:**
+- Network unavailable during update → report connection error
+- Permission denied on cache directory → report permission error
+
+### 2.5 Command Search
+
+**Description:** Find commands whose names contain a search term.
+
+**User Input:** Search keywords
+
+**User Output:** List of matching command names from cached pages
+
+**Edge Cases:**
+- No cached pages → prompt user to update cache first
+- No matches → report no commands found
+- Case sensitivity → search is case-insensitive
+
+**Error Conditions:**
+- Empty search term → display usage guidance
+
+### 2.6 Command Listing
+
+**Description:** List all available commands for a platform.
+
+**User Input:** Optional platform filter
+
+**User Output:** Newline-separated list of command names
+
+**Edge Cases:**
+- Empty cache → return empty list
+- Platform filter → only show commands for that platform
+
+### 2.7 Local File Rendering
+
+**Description:** Render a local markdown file using the same formatting as fetched pages.
+
+**User Input:** Path to local markdown file
+
+**User Output:** Formatted output identical to fetched page rendering
+
+**Edge Cases:**
+- File not found → report file error
+- Malformed markdown → render what's parseable
+
+### 2.8 Display Options
+
+**Description:** Control how command examples are displayed.
+
+**Short vs Long Options:**
+- Commands may include placeholder alternatives like `{{[-s|--short]}}`
+- User can choose to display short form, long form, or both
+
+**Plain Output:**
+- Raw markdown without color formatting for piping or non-terminal use
+
+**Color Customization:**
+- Command name, description, examples, commands, and parameters have separate color settings
+- Colors include foreground, background, and attributes (bold, underline, etc.)
+
+## 3. CLI Surface
+
+### 3.1 Primary Invocation
+
+```
+tldr <command> [options]
+```
+
+### 3.2 Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `command` | Command name to look up (required unless using --list, --update, or --clear-cache) |
+
+### 3.3 Options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--version` | `-v` | Display client version and specification version |
+| `--update` | `-u` | Download and cache all pages for configured languages |
+| `--clear-cache` | `-k` | Delete cached pages |
+| `--platform` | `-p` | Override platform detection (linux, osx, windows, etc.) |
+| `--list` | `-l` | List all cached commands |
+| `--source` | `-s` | Override default pages source URL |
+| `--color` | `-c` | Force color output even when not a terminal |
+| `--render` | `-r` | Render local markdown file(s) |
+| `--language` | `-L` | Override language selection |
+| `--markdown` | `-m` | Output raw markdown without formatting |
+| `--short-options` | | Display short-form options in examples |
+| `--long-options` | | Display long-form options in examples |
+| `--search` | | Search for commands matching keywords |
+| `--print-completion` | | Generate shell completion script (bash, zsh, tcsh) |
+
+## 4. Data Sources
+
+### 4.1 Primary Source
+
+- **Remote Repository:** GitHub-hosted tldr-pages repository
+- **Pages Location:** Raw content URL serving individual markdown files
+- **Format:** Markdown files following tldr page specification
+- **Structure:** `pages[.lang]/platform/command.md`
+
+### 4.2 Cache Archive
+
+- **Location:** GitHub releases page
+- **Format:** ZIP archive containing all pages for a language
+- **Naming:** `tldr-pages.{lang}.zip`
+
+### 4.3 System Cache
+
+- **Location:** System-wide data directory (e.g., `/usr/share/tldr`)
+- **Purpose:** Pre-installed pages for offline operation
+- **Priority:** Checked after user cache, before network fetch
+
+## 5. Output Formats
+
+### 5.1 Formatted Output (Default)
+
+- Leading whitespace for visual indentation
+- Color-coded sections:
+  - **Name:** Bold (customizable)
+  - **Description:** Default (customizable)
+  - **Examples:** Green (customizable)
+  - **Commands:** Red (customizable)
+  - **Parameters:** Default (customizable)
+- Backtick-wrapped text in examples rendered in yellow italics
+- Placeholder parameters displayed within command templates
+
+### 5.2 Plain Output
+
+- Raw markdown content without ANSI escape sequences
+- Suitable for piping to other tools or non-terminal environments
+
+### 5.3 List Output
+
+- One command name per line
+- Suitable for scripting and completion generation
+
+## 6. Performance Characteristics
+
+### 6.1 Latency Expectations
+
+- **Cache Hit:** Sub-second response (file read only)
+- **Network Fetch:** 1-10 seconds depending on connection (single page)
+- **Cache Update:** 10-60 seconds (downloads all pages archive)
+
+### 6.2 Caching Behavior
+
+- **Cache Location:** User's XDG cache directory or home directory fallback
+- **Cache Freshness:** Pages considered stale after configurable hours (default: 168 hours / 1 week)
+- **Cache Strategy:**
+  1. Check user cache (if fresh)
+  2. Check system cache
+  3. Fetch from network
+  4. Store to user cache on successful fetch
+
+### 6.3 Network Behavior
+
+- **Timeout:** 10 seconds per request
+- **User Agent:** Identifies as tldr client
+- **TLS:** Supports custom CA certificates
+- **Insecure Mode:** Option to skip certificate verification
+- **Offline Mode:** Can disable network entirely, serving only from cache
+
+## 7. Configuration
+
+### 7.1 Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `TLDR_PAGES_SOURCE_LOCATION` | Base URL for page fetching | GitHub raw content |
+| `TLDR_DOWNLOAD_CACHE_LOCATION` | URL for cache archive | GitHub releases |
+| `TLDR_NETWORK_ENABLED` | Enable/disable network (0/1) | 1 (enabled) |
+| `TLDR_CACHE_ENABLED` | Enable/disable caching (0/1) | 1 (enabled) |
+| `TLDR_CACHE_MAX_AGE` | Hours before cache is stale | 168 (1 week) |
+| `TLDR_CERT` | Path to CA certificate file | System default |
+| `TLDR_ALLOW_INSECURE` | Skip TLS verification (0/1) | 0 (secure) |
+| `TLDR_LANGUAGE` | Override display language | System locale |
+| `TLDR_PLATFORM` | Override platform detection | Auto-detect |
+| `TLDR_OPTIONS` | Default option length (short/long/both) | long |
+| `TLDR_COLOR_NAME` | Color for command names | bold |
+| `TLDR_COLOR_DESCRIPTION` | Color for descriptions | (none) |
+| `TLDR_COLOR_EXAMPLE` | Color for example text | green |
+| `TLDR_COLOR_COMMAND` | Color for commands | red |
+| `TLDR_COLOR_PARAMETER` | Color for parameters | (none) |
+| `LANG` | System locale for language fallback | C |
+| `LANGUAGE` | Colon-separated locale priority list | (none) |
+| `XDG_CACHE_HOME` | User cache directory | ~/.cache |
+| `XDG_DATA_DIRS` | System data directories | /usr/share |
+
+### 7.2 Cache Directory Structure
+
+```
+{cache_root}/
+├── pages/
+│   ├── common/
+│   │   └── {command}.md
+│   ├── linux/
+│   ├── osx/
+│   └── ...
+├── pages.es/
+│   └── ...
+└── pages.zh/
+    └── ...
+```
+
+## 8. Failure Modes
+
+### 8.1 Graceful Failures
+
+| Condition | Behavior |
+|-----------|----------|
+| Network unavailable | Serve from cache if available, else report error |
+| Command not found | Display contribution message with repository link |
+| Language unavailable | Fall back through locale chain to English |
+| Platform unavailable | Fall back to "common" platform |
+| Cache read error | Attempt network fetch |
+| Cache write error | Continue without caching (warn) |
+| Invalid environment variable | Use default value (warn if appropriate) |
+
+### 8.2 Fatal Failures
+
+| Condition | Behavior |
+|-----------|----------|
+| No command specified (without valid flags) | Display help and exit |
+| Network timeout with no cache | Report error and exit |
+| Keyboard interrupt | Clean exit with message |
+
+## 9. Success Criteria for Any Language Implementation
+
+### 9.1 Functional Requirements
+
+1. **Basic Lookup:** `tldr tar` returns formatted examples for tar command
+2. **Multi-word Commands:** `tldr git commit` resolves to git-commit page
+3. **Platform Override:** `tldr --platform linux tar` shows Linux-specific page
+4. **Language Override:** `tldr --language es tar` shows Spanish translation
+5. **Cache Update:** `tldr --update` downloads and stores all pages
+6. **Cache Clear:** `tldr --clear-cache` removes cached pages
+7. **Command List:** `tldr --list` outputs all cached command names
+8. **Search:** `tldr --search git` finds commands containing "git"
+9. **Offline Operation:** With `TLDR_NETWORK_ENABLED=0`, serves only from cache
+10. **Local Rendering:** `tldr --render file.md` formats local file
+
+### 9.2 Output Requirements
+
+1. **Color Output:** Sections are color-coded when terminal supports it
+2. **Plain Output:** `tldr --markdown tar` outputs raw markdown
+3. **Option Display:** Short/long option preferences are respected
+4. **Locale Fallback:** Missing translations fall back to English
+
+### 9.3 Compatibility Requirements
+
+1. **Platform Detection:** Correctly identifies current OS
+2. **Path Handling:** Works with XDG directories and fallbacks
+3. **Unicode Support:** Handles non-ASCII characters in pages
+4. **Exit Codes:** Returns 0 on success, non-zero on failure
+
+### 9.4 Performance Requirements
+
+1. **Cache Reads:** Sub-second for local page retrieval
+2. **Network Timeout:** Does not hang indefinitely on slow connections
+3. **Resource Usage:** Minimal memory footprint for simple lookups

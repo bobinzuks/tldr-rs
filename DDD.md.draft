@@ -1,0 +1,455 @@
+# tldr Client — Domain-Driven Design Document (Language-Neutral)
+
+## 1. Domains
+
+### 1.1 Page Retrieval Domain (Core)
+
+The central bounded context responsible for locating and fetching documentation pages. This is the primary domain that orchestrates cache lookup, network fetch, and platform/language resolution.
+
+**Responsibilities:**
+- Resolve command names to page locations
+- Coordinate multi-source page lookup (cache → system cache → network)
+- Handle platform fallback (specific → common)
+- Handle language fallback (locale chain → English)
+
+### 1.2 Cache Management Domain
+
+Manages local storage of documentation pages for offline access and performance.
+
+**Responsibilities:**
+- Store fetched pages to local filesystem
+- Retrieve pages from cache
+- Track cache freshness (age-based invalidation)
+- Bulk update cache from archive downloads
+- Clear cache by language
+
+### 1.3 Rendering Domain
+
+Transforms raw markdown page content into formatted terminal output.
+
+**Responsibilities:**
+- Parse tldr markdown format (name, description, examples, commands)
+- Apply color styling based on configuration
+- Handle placeholder parameter formatting
+- Support plain (raw) output mode
+
+### 1.4 CLI Domain
+
+User interface layer for argument parsing and command dispatch.
+
+**Responsibilities:**
+- Parse command-line arguments
+- Route to appropriate handler (lookup, update, clear, list, render, search)
+- Generate shell completion scripts
+- Display version information
+
+---
+
+## 2. Entities
+
+### 2.1 Page
+
+The primary entity representing a tldr documentation page.
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| command | string | The command name (e.g., "tar", "git-commit") |
+| platform | Platform | Target operating system |
+| language | Language | Translation language |
+| content | bytes | Raw markdown content |
+
+**Invariants:**
+- Command name is lowercase, hyphenated for multi-word commands
+- Platform must be a valid platform identifier
+- Language follows locale code format
+
+### 2.2 CacheEntry
+
+Represents a cached page with metadata.
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| page | Page | The cached page content |
+| path | FilePath | Filesystem location |
+| last_modified | Timestamp | When the entry was cached |
+
+**Invariants:**
+- Path follows `{cache_root}/{pages_dir}/{platform}/{command}.md` structure
+- Last modified reflects filesystem mtime
+
+---
+
+## 3. Value Objects
+
+### 3.1 Platform
+
+An immutable identifier for a target operating system.
+
+**Valid values:** `android`, `freebsd`, `linux`, `netbsd`, `openbsd`, `osx`, `sunos`, `windows`, `common`
+
+**Behavior:**
+- Can be detected from runtime environment
+- Maps from OS identifiers (darwin → osx, win32 → windows)
+- "common" acts as universal fallback
+
+### 3.2 Language
+
+An immutable locale identifier for page translations.
+
+**Format:** ISO language code, optionally with region (e.g., "en", "es", "pt_BR", "zh_TW")
+
+**Behavior:**
+- Parses from LANG/LANGUAGE environment variables
+- Handles regional variants (pt_PT, pt_BR)
+- Falls back through locale chain to "en"
+
+### 3.3 ColorSpec
+
+Terminal color specification for styled output.
+
+| Component | Type | Description |
+|-----------|------|-------------|
+| foreground | Color? | Text color |
+| background | Color? | Background color |
+| attributes | list | Style attributes (bold, underline, etc.) |
+
+**Valid foreground colors:** blue, green, yellow, cyan, magenta, white, grey, red
+
+**Valid backgrounds:** on_blue, on_cyan, on_magenta, on_white, on_grey, on_yellow, on_red, on_green
+
+**Valid attributes:** reverse, blink, dark, concealed, underline, bold
+
+### 3.4 PageUrl
+
+Computed URL for fetching a page from remote source.
+
+**Structure:** `{remote}{.language}/{platform}/{command}.md`
+
+**Examples:**
+- English: `https://...pages/linux/tar.md`
+- Spanish: `https://...pages.es/linux/tar.md`
+
+### 3.5 CachePath
+
+Computed filesystem path for a cached page.
+
+**Structure:** `{cache_root}/{pages_dir}/{platform}/{command}.md`
+
+Where `pages_dir` is:
+- `pages` for English
+- `pages.{lang}` for other languages
+
+---
+
+## 4. Aggregates
+
+### 4.1 PageSearchResult
+
+Aggregate of pages found across multiple platforms.
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| results | list[(Page, Platform)] | Ordered list of found pages |
+| primary | Page | First result (highest priority platform) |
+| alternatives | list[Platform] | Other platforms where page exists |
+
+**Invariants:**
+- Results ordered by platform priority (current → common → others)
+- Primary is always the first result
+- Empty results indicate page not found
+
+### 4.2 LanguageChain
+
+Ordered list of languages to try when fetching pages.
+
+**Construction:**
+1. TLDR_LANGUAGE environment variable (highest priority)
+2. LANGUAGE environment variable (colon-separated list)
+3. LANG environment variable (system locale)
+4. "en" (fallback, always present)
+
+**Invariants:**
+- Always terminates with "en"
+- No duplicates in chain
+- Regional variants preserved (pt_BR distinct from pt_PT)
+
+---
+
+## 5. Ports (Interfaces)
+
+### 5.1 PageSource
+
+Interface for retrieving page content.
+
+```
+interface PageSource {
+    fetch(command, platform, language) -> bytes?
+    exists(command, platform, language) -> bool
+}
+```
+
+**Implementations:**
+- NetworkPageSource (HTTP fetch from GitHub)
+- CachePageSource (local filesystem read)
+- SystemCachePageSource (system-wide read-only cache)
+
+### 5.2 PageCache
+
+Interface for cache operations.
+
+```
+interface PageCache {
+    get(command, platform, language) -> CacheEntry?
+    put(page, command, platform, language) -> void
+    is_fresh(command, platform, language, max_age) -> bool
+    clear(language?) -> void
+    update_from_archive(language) -> count
+}
+```
+
+### 5.3 PageRenderer
+
+Interface for outputting formatted pages.
+
+```
+interface PageRenderer {
+    render(page, option_length) -> void
+}
+```
+
+**Implementations:**
+- ColorRenderer (ANSI-styled terminal output)
+- PlainRenderer (raw markdown passthrough)
+
+### 5.4 Configuration
+
+Interface for reading runtime configuration.
+
+```
+interface Configuration {
+    get_pages_source_url() -> string
+    get_download_cache_url() -> string
+    is_network_enabled() -> bool
+    is_cache_enabled() -> bool
+    get_cache_max_age() -> hours
+    get_ssl_context() -> SSLContext?
+    get_language_preference() -> Language?
+    get_platform_preference() -> Platform?
+    get_option_display() -> "short" | "long" | "both"
+    get_color_for(element) -> ColorSpec
+}
+```
+
+### 5.5 PlatformDetector
+
+Interface for determining current platform.
+
+```
+interface PlatformDetector {
+    current() -> Platform
+    list_priority() -> list[Platform]  // current first, then common, then others
+}
+```
+
+---
+
+## 6. Adapters
+
+### 6.1 Network Adapters
+
+**HttpPageSource**
+- Fetches pages via HTTP GET from raw GitHub content
+- Timeout: 10 seconds
+- User-Agent header for identification
+- Supports custom CA certificates
+- Supports insecure mode (skip TLS verification)
+
+**HttpArchiveDownloader**
+- Downloads ZIP archives from GitHub releases
+- Extracts to cache directory
+- Pattern: `tldr-pages.{lang}.zip`
+
+### 6.2 Filesystem Adapters
+
+**XdgCacheAdapter**
+- Reads/writes to XDG_CACHE_HOME/tldr or ~/.cache/tldr
+- Creates directories as needed
+- Tracks mtime for freshness checking
+
+**SystemCacheAdapter**
+- Reads from XDG_DATA_DIRS paths or /usr/share/tldr
+- Read-only (system-installed pages)
+
+### 6.3 Output Adapters
+
+**TermcolorAdapter**
+- Uses termcolor library for ANSI codes
+- Handles Windows via colorama initialization
+- Writes to stdout via buffer for Unicode safety
+
+**PlainAdapter**
+- Direct print of raw lines
+- No ANSI escape sequences
+
+### 6.4 Environment Adapters
+
+**EnvironmentConfiguration**
+- Reads from os.environ
+- Parses LANG/LANGUAGE for locale detection
+- Handles XDG directory variables
+
+---
+
+## 7. Domain Events
+
+### 7.1 PageRetrieved
+
+Signals successful page lookup.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| command | string | Command that was looked up |
+| platform | Platform | Platform page was found for |
+| source | "cache" \| "system_cache" \| "network" | Where page came from |
+
+### 7.2 CacheMiss
+
+Signals cache lookup failure, triggering network fetch.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| command | string | Command that was looked up |
+| platform | Platform | Platform checked |
+| language | Language | Language checked |
+| reason | "not_found" \| "stale" | Why cache was missed |
+
+### 7.3 CacheUpdated
+
+Signals successful bulk cache update.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| language | Language | Language that was updated |
+| count | int | Number of pages cached |
+
+### 7.4 CacheCleared
+
+Signals cache deletion.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| language | Language | Language that was cleared |
+| path | FilePath | Directory that was removed |
+
+### 7.5 PageNotFound
+
+Signals that documentation does not exist.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| command | string | Command that was looked up |
+| platforms | list[Platform] | All platforms checked |
+| contribution_url | string | URL for contributing the page |
+
+### 7.6 NetworkError
+
+Signals network fetch failure.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| url | string | URL that failed |
+| error | string | Error description |
+
+---
+
+## 8. Cross-Cutting Concerns
+
+### 8.1 Error Handling
+
+**Strategy:** Graceful degradation with fallbacks
+
+| Error Type | Handling |
+|------------|----------|
+| Network timeout | Fall back to cache |
+| HTTP 404 | Try next platform/language |
+| Cache read error | Attempt network fetch |
+| Cache write error | Continue without caching (warn) |
+| Invalid config | Use defaults (warn) |
+| File not found | Report and exit |
+
+**Exit Codes:**
+- 0: Success
+- 1: Page not found or error
+
+### 8.2 Platform Detection
+
+**Resolution Order:**
+1. Command-line argument (`--platform`)
+2. Environment variable (`TLDR_PLATFORM`)
+3. Runtime detection (`sys.platform` mapping)
+
+**OS Mapping:**
+| OS Identifier | Platform |
+|---------------|----------|
+| darwin | osx |
+| win32 | windows |
+| linux | linux |
+| freebsd | freebsd |
+| ... | ... |
+
+### 8.3 Language Resolution
+
+**Resolution Order:**
+1. Command-line argument (`--language`)
+2. TLDR_LANGUAGE environment variable
+3. LANGUAGE environment variable (colon-separated)
+4. LANG environment variable
+5. "en" (fallback)
+
+**Locale Parsing:**
+- Strip encoding suffix (`.UTF-8`)
+- Preserve regional variants (pt_BR, zh_TW)
+- Map "pt" to "pt_PT"
+- Ignore "C" and "POSIX"
+
+### 8.4 Path Resolution
+
+**Cache Directory:**
+1. XDG_CACHE_HOME/tldr (if XDG_CACHE_HOME set)
+2. HOME/.cache/tldr (if HOME set)
+3. ~/.cache/tldr (fallback)
+
+**System Cache:**
+1. First match in XDG_DATA_DIRS with tldr subdirectory
+2. /usr/share/tldr (fallback)
+
+### 8.5 Command Name Normalization
+
+Multi-word commands are joined with hyphens:
+- Input: `["git", "commit"]`
+- Normalized: `"git-commit"`
+
+Case is lowercased:
+- Input: `"TAR"`
+- Normalized: `"tar"`
+
+### 8.6 Markdown Format
+
+**tldr page structure:**
+```
+# command-name
+
+> Brief description.
+> More description.
+
+- Example description with `inline code`:
+
+`command template {{placeholder}}`
+
+- Another example:
+
+`command {{[-s|--short]}} {{param}}`
+```
+
+**Placeholder format:** `{{description}}`
+**Option alternatives:** `{{[-s|--short]}}`
